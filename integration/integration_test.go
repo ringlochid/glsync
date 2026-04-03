@@ -48,9 +48,6 @@ func TestLeetCodeGitIntegration(t *testing.T) {
 	_, message := getCommitTimeAndMessage(t, mockGitRepoUrl)
 	assert.Equal(t, "Sync accepted LeetCode submissions (1 problems, 1 submissions)", message)
 	assertRemoteFileExists(t, mockGitRepoUrl, "README.md")
-	assertRemoteFileExists(t, mockGitRepoUrl, "data/.gitkeep")
-	assertRemoteFileExists(t, mockGitRepoUrl, "page/.gitkeep")
-	assertRemoteFileExists(t, mockGitRepoUrl, "scripts/.gitkeep")
 	assertRemoteFileExists(t, mockGitRepoUrl, "problems/128-longest-consecutive-sequence/README.md")
 }
 

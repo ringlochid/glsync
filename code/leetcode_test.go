@@ -214,6 +214,12 @@ func TestFetchSubmissionsShouldReturnErrorWhenFetchSubmissionCodeFails(t *testin
 				t.Error(err)
 			}
 		}
+		if strings.Contains(reqBody, "questionData") {
+			_, err := w.Write(questionDetailsResponse)
+			if err != nil {
+				t.Error(err)
+			}
+		}
 		if strings.Contains(reqBody, "submissionList") {
 			_, err := w.Write(questionSubmissionListResponse)
 			if err != nil {
@@ -230,6 +236,7 @@ func TestFetchSubmissionsShouldReturnErrorWhenFetchSubmissionCodeFails(t *testin
 
 	// Then
 	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to fetch any submissions successfully")
 }
 
 func TestFetchSubmissionsShouldRetryAndFailWithEmptySubmissionDataDetails(t *testing.T) {
@@ -254,6 +261,7 @@ func TestFetchSubmissionsShouldRetryAndFailWithEmptySubmissionDataDetails(t *tes
 	assert.Error(t, err)
 	assert.Empty(t, code)
 	assert.Equal(t, maxRetry+1, attemptCount)
+	assert.Contains(t, err.Error(), "null response for submission 123")
 }
 
 func TestFetchSubmissionsShouldRetryAndSucceedWithValidCode(t *testing.T) {
@@ -309,4 +317,34 @@ func TestFetchSubmissionsShouldRetryAndFailWithEmptyCode(t *testing.T) {
 	assert.Error(t, err)
 	assert.Empty(t, code)
 	assert.Equal(t, maxRetry+1, attemptCount)
+}
+
+func TestFetchSubmissionCodesShouldRetryFailedIDsInSecondPass(t *testing.T) {
+	attempts := map[string]int{}
+	currentHandler = func(w http.ResponseWriter, reqBody string) {
+		if !strings.Contains(reqBody, "submissionDetails") {
+			return
+		}
+		submissionID := "1"
+		if strings.Contains(reqBody, `"submissionId": 2`) {
+			submissionID = "2"
+		}
+		attempts[submissionID]++
+		response := RequestBody[lcSubmissionDetailsData]{
+			Data: lcSubmissionDetailsData{
+				Details: &lcSubmissionDetails{Code: "code-" + submissionID},
+			},
+		}
+		if submissionID == "2" && attempts[submissionID] <= maxRetry+1 {
+			response.Data.Details = nil
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(response))
+	}
+
+	codes, err := lc.fetchSubmissionCodes([]lcSumbissionOverview{{Id: "1"}, {Id: "2"}})
+
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]string{"1": "code-1", "2": "code-2"}, codes)
+	assert.Equal(t, 1, attempts["1"])
+	assert.Equal(t, maxRetry+2, attempts["2"])
 }

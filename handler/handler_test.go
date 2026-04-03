@@ -23,18 +23,14 @@ func TestExecute(t *testing.T) {
 			WriteFile("README.md", gomock.Any()).
 			DoAndReturn(func(_ string, content string) error {
 				assertContainsAll(t, content,
-					"# LeetCode archive",
-					"`problems/`",
-					"`data/`",
-					"`page/`",
-					"`scripts/`",
+					"# LeetCode accepted-submissions archive",
+					"generated archive of accepted LeetCode submissions",
+					"`problems/<zero-padded-id>-<title-slug>/`",
+					"difficulty, tags, and accepted-submission count",
 				)
 				return nil
 			}).
 			Times(1),
-		mockGitClient.EXPECT().WriteFile("data/.gitkeep", "").Return(nil).Times(1),
-		mockGitClient.EXPECT().WriteFile("page/.gitkeep", "").Return(nil).Times(1),
-		mockGitClient.EXPECT().WriteFile("scripts/.gitkeep", "").Return(nil).Times(1),
 		mockGitClient.EXPECT().
 			WriteFile("problems/01-two-sum/README.md", gomock.Any()).
 			DoAndReturn(func(_ string, content string) error {
@@ -159,9 +155,6 @@ func TestExecuteShouldPanicWhenCommitAllFails(t *testing.T) {
 	gomock.InOrder(
 		mockCodeClient.EXPECT().FetchSubmissions().Return(subs, nil).Times(1),
 		mockGitClient.EXPECT().WriteFile("README.md", gomock.Any()).Return(nil).Times(1),
-		mockGitClient.EXPECT().WriteFile("data/.gitkeep", "").Return(nil).Times(1),
-		mockGitClient.EXPECT().WriteFile("page/.gitkeep", "").Return(nil).Times(1),
-		mockGitClient.EXPECT().WriteFile("scripts/.gitkeep", "").Return(nil).Times(1),
 		mockGitClient.EXPECT().WriteFile("problems/01-two-sum/README.md", gomock.Any()).Return(nil).Times(1),
 		mockGitClient.EXPECT().WriteFile("problems/01-two-sum/2024-12-15T00-00-00Z__sub-1a.py", subs[1].Code).Return(nil).Times(1),
 		mockGitClient.EXPECT().WriteFile("problems/01-two-sum/2024-12-31T00-00-00Z__sub-1b.go", subs[0].Code).Return(nil).Times(1),
@@ -185,9 +178,6 @@ func TestExecuteShouldPanicWhenPushFails(t *testing.T) {
 	gomock.InOrder(
 		mockCodeClient.EXPECT().FetchSubmissions().Return(subs, nil).Times(1),
 		mockGitClient.EXPECT().WriteFile("README.md", gomock.Any()).Return(nil).Times(1),
-		mockGitClient.EXPECT().WriteFile("data/.gitkeep", "").Return(nil).Times(1),
-		mockGitClient.EXPECT().WriteFile("page/.gitkeep", "").Return(nil).Times(1),
-		mockGitClient.EXPECT().WriteFile("scripts/.gitkeep", "").Return(nil).Times(1),
 		mockGitClient.EXPECT().WriteFile("problems/01-two-sum/README.md", gomock.Any()).Return(nil).Times(1),
 		mockGitClient.EXPECT().WriteFile("problems/01-two-sum/2024-12-15T00-00-00Z__sub-1a.py", subs[1].Code).Return(nil).Times(1),
 		mockGitClient.EXPECT().WriteFile("problems/01-two-sum/2024-12-31T00-00-00Z__sub-1b.go", subs[0].Code).Return(nil).Times(1),

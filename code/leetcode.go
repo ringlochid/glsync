@@ -9,7 +9,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ahmed-e-abdulaziz/glsync/config"
@@ -58,12 +60,14 @@ func (lc leetcode) FetchSubmissions() ([]Submission, error) {
 
 	log.Printf("User has %v solved questions on LeetCode, fetching accepted submissions for each next\n", len(questions))
 	submissions := make([]Submission, 0, len(questions))
+	failedQuestions := make([]string, 0)
 
 	for _, question := range questions {
 		log.Printf("\tFetching accepted submissions for question: %v %v\n", question.FrontendId, question.Title)
 		questionSubmissions, err := lc.fetchQuestionSubmissions(question)
 		if err != nil {
-			log.Printf("Warning: Failed to fetch accepted submissions for question %s: %v\n", question.Title, err)
+			log.Printf("Error: Failed to fetch accepted submissions for question %s: %v\n", question.Title, err)
+			failedQuestions = append(failedQuestions, fmt.Sprintf("%s (%s): %v", question.Title, question.TitleSlug, err))
 			continue
 		}
 		submissions = append(submissions, questionSubmissions...)
@@ -71,6 +75,10 @@ func (lc leetcode) FetchSubmissions() ([]Submission, error) {
 
 	if len(submissions) == 0 {
 		return nil, errors.New("failed to fetch any submissions successfully")
+	}
+	if len(failedQuestions) > 0 {
+		sort.Strings(failedQuestions)
+		return nil, fmt.Errorf("incomplete accepted-submission sync; %d question(s) failed: %s", len(failedQuestions), strings.Join(failedQuestions, "; "))
 	}
 
 	log.Printf("Fetched %d accepted submissions successfully across %d solved questions\n==============\n", len(submissions), len(questions))
@@ -94,38 +102,97 @@ func (lc leetcode) fetchQuestionSubmissions(question lcQuestion) ([]Submission, 
 	}
 
 	tags := extractTagNames(details.TopicTags)
-	submissions := make([]Submission, 0, len(lcSubmissions))
-	for _, lcSubmission := range lcSubmissions {
-		code, err := lc.fetchSubmissionCode(lcSubmission.Id, 0)
-		if err != nil {
-			log.Printf("Warning: Error fetching submission code for submission %s: %v\n", lcSubmission.Id, err)
-			continue
-		}
-
-		timestamp, err := parseSubmissionTimestamp(lcSubmission.Timestamp)
-		if err != nil {
-			log.Printf("Warning: Error parsing submission timestamp for submission %s: %v\n", lcSubmission.Id, err)
-			continue
-		}
-
-		submissions = append(submissions, Submission{
-			Id:              question.FrontendId,
-			Title:           question.Title,
-			TitleSlug:       question.TitleSlug,
-			SubmissionId:    lcSubmission.Id,
-			LastSubmittedAt: timestamp,
-			Lang:            lcSubmission.Lang,
-			Code:            code,
-			Difficulty:      details.Difficulty,
-			Tags:            tags,
-		})
+	submissions, err := lc.buildSubmissions(question, details, tags, lcSubmissions)
+	if err != nil {
+		return nil, err
 	}
-
 	if len(submissions) == 0 {
 		return nil, errors.New("submission code error")
 	}
 
 	return submissions, nil
+}
+
+func (lc leetcode) buildSubmissions(question lcQuestion, details lcQuestionDetails, tags []string, lcSubmissions []lcSumbissionOverview) ([]Submission, error) {
+	timestamps := make(map[string]time.Time, len(lcSubmissions))
+	failedTimestamps := make([]string, 0)
+	for _, lcSubmission := range lcSubmissions {
+		timestamp, err := parseSubmissionTimestamp(lcSubmission.Timestamp)
+		if err != nil {
+			log.Printf("Warning: Error parsing submission timestamp for submission %s: %v\n", lcSubmission.Id, err)
+			failedTimestamps = append(failedTimestamps, lcSubmission.Id)
+			continue
+		}
+		timestamps[lcSubmission.Id] = timestamp
+	}
+	if len(failedTimestamps) > 0 {
+		sort.Strings(failedTimestamps)
+		return nil, fmt.Errorf("failed to parse timestamps for submission(s): %s", strings.Join(failedTimestamps, ", "))
+	}
+
+	codes, err := lc.fetchSubmissionCodes(lcSubmissions)
+	if err != nil {
+		return nil, err
+	}
+
+	submissions := make([]Submission, 0, len(lcSubmissions))
+	for _, lcSubmission := range lcSubmissions {
+		submissions = append(submissions, Submission{
+			Id:              question.FrontendId,
+			Title:           question.Title,
+			TitleSlug:       question.TitleSlug,
+			SubmissionId:    lcSubmission.Id,
+			LastSubmittedAt: timestamps[lcSubmission.Id],
+			Lang:            lcSubmission.Lang,
+			Code:            codes[lcSubmission.Id],
+			Difficulty:      details.Difficulty,
+			Tags:            tags,
+		})
+	}
+
+	return submissions, nil
+}
+
+func (lc leetcode) fetchSubmissionCodes(lcSubmissions []lcSumbissionOverview) (map[string]string, error) {
+	codes := make(map[string]string, len(lcSubmissions))
+	failed := make([]lcSumbissionOverview, 0)
+
+	for _, lcSubmission := range lcSubmissions {
+		code, err := lc.fetchSubmissionCode(lcSubmission.Id, 0)
+		if err != nil {
+			log.Printf("Warning: Error fetching submission code for submission %s: %v\n", lcSubmission.Id, err)
+			failed = append(failed, lcSubmission)
+			continue
+		}
+		codes[lcSubmission.Id] = code
+	}
+
+	if len(failed) == 0 {
+		return codes, nil
+	}
+
+	log.Printf("Retrying %d submission detail fetch(es) in a second pass\n", len(failed))
+	for _, lcSubmission := range failed {
+		code, err := lc.fetchSubmissionCode(lcSubmission.Id, 0)
+		if err != nil {
+			log.Printf("Error: Submission detail remained unavailable for submission %s after second pass: %v\n", lcSubmission.Id, err)
+			continue
+		}
+		codes[lcSubmission.Id] = code
+	}
+
+	missing := make([]string, 0)
+	for _, lcSubmission := range lcSubmissions {
+		if _, ok := codes[lcSubmission.Id]; !ok {
+			missing = append(missing, lcSubmission.Id)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return nil, fmt.Errorf("failed to fetch submission details for submission(s): %s", strings.Join(missing, ", "))
+	}
+
+	return codes, nil
 }
 
 // Fetches question to extract required info for Submission struct
@@ -247,7 +314,7 @@ func (lc leetcode) fetchSubmissionCode(id string, retry int) (string, error) {
 			return lc.fetchSubmissionCode(id, retry+1)
 		}
 		log.Printf("Warning: Max retries reached, consistently getting null response for submission %s", id)
-		return "", fmt.Errorf("max retries reached for null response%s", id)
+		return "", fmt.Errorf("max retries reached for null response for submission %s", id)
 	}
 
 	if len(body.Data.Details.Code) == 0 {
