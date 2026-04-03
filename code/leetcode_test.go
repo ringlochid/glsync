@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ahmed-e-abdulaziz/glsync/config"
 	"github.com/stretchr/testify/assert"
@@ -21,6 +22,9 @@ var submissionDetailsResponse []byte
 
 //go:embed leetcode-testdata/leetcode-responses/user-progress-question-list-response.json
 var userProgressQuestionListResponse []byte
+
+//go:embed leetcode-testdata/leetcode-responses/question-details-response.json
+var questionDetailsResponse []byte
 
 var (
 	submissionListCalled           = false
@@ -38,9 +42,9 @@ func TestMain(m *testing.M) {
 		reqBody, _ := io.ReadAll(r.Body)
 		currentHandler(w, string(reqBody))
 	}))
-	testUrl := "http://" + server.Listener.Addr().String()
+	testURL := "http://" + server.Listener.Addr().String()
 	cfg := config.Config{LcCookie: "COOKIE", RepoUrl: "REPO_URL"}
-	lc = NewLeetCode(cfg, testUrl)
+	lc = NewLeetCode(cfg, testURL)
 	m.Run()
 }
 
@@ -52,6 +56,12 @@ func TestFetchSubmissions(t *testing.T) {
 			_, err := w.Write(userProgressQuestionListResponse)
 			if err != nil {
 				t.Fatal("Couldn't write userProgressQuestionListResponse to response correctly")
+			}
+		}
+		if strings.Contains(reqBody, "questionData") {
+			_, err := w.Write(questionDetailsResponse)
+			if err != nil {
+				t.Fatal("Couldn't write questionDetailsResponse to response correctly")
 			}
 		}
 		if strings.Contains(reqBody, "submissionList") {
@@ -71,16 +81,92 @@ func TestFetchSubmissions(t *testing.T) {
 	}
 
 	// When
-	res, _ := lc.FetchSubmissions()
+	res, err := lc.FetchSubmissions()
 	submission := res[0]
 
 	// Then
+	assert.NoError(t, err)
 	assert.Equal(t, submission.Id, "128")
 	assert.Equal(t, submission.Lang, "golang")
 	assert.Equal(t, submission.Title, "Longest Consecutive Sequence")
+	assert.Equal(t, "Hard", submission.Difficulty)
+	assert.Equal(t, []string{"Array", "Hash Table"}, submission.Tags)
 	assert.True(t, userProgressQuestionListCalled)
 	assert.True(t, submissionListCalled)
 	assert.True(t, submissionDetailsCalled)
+}
+
+func TestFetchSubmissionsShouldFetchAllAcceptedSubmissionsAndUseAcceptedStatus(t *testing.T) {
+	// Given
+	submissionListCalls := 0
+	currentHandler = func(w http.ResponseWriter, reqBody string) {
+		if strings.Contains(reqBody, "userProgressQuestionList") {
+			_, err := w.Write(userProgressQuestionListResponse)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		if strings.Contains(reqBody, "questionData") {
+			_, err := w.Write(questionDetailsResponse)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		if strings.Contains(reqBody, "submissionList") {
+			submissionListCalls++
+			assert.Contains(t, reqBody, `"status": 10`)
+			if submissionListCalls == 1 {
+				assert.Contains(t, reqBody, `"lastKey": null`)
+				nextKey := "page-2"
+				response := RequestBody[lcSubmissionListData]{
+					Data: lcSubmissionListData{
+						LCSubmissionList: lcSubmissionList{
+							LastKey: &nextKey,
+							HasNext: true,
+							LCSubmissions: []lcSumbissionOverview{
+								{Id: "1", Lang: "golang", Timestamp: "1735406731"},
+								{Id: "2", Lang: "golang", Timestamp: "1735406831"},
+							},
+						},
+					},
+				}
+				assert.NoError(t, json.NewEncoder(w).Encode(response))
+				return
+			}
+			assert.Contains(t, reqBody, `"lastKey": "page-2"`)
+			response := RequestBody[lcSubmissionListData]{
+				Data: lcSubmissionListData{
+					LCSubmissionList: lcSubmissionList{
+						LastKey: nil,
+						HasNext: false,
+						LCSubmissions: []lcSumbissionOverview{
+							{Id: "3", Lang: "golang", Timestamp: "1735406931"},
+						},
+					},
+				},
+			}
+			assert.NoError(t, json.NewEncoder(w).Encode(response))
+			return
+		}
+		if strings.Contains(reqBody, "submissionDetails") {
+			_, err := w.Write(submissionDetailsResponse)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	// When
+	res, err := lc.FetchSubmissions()
+
+	// Then
+	assert.NoError(t, err)
+	assert.Len(t, res, 3)
+	assert.Equal(t, 2, submissionListCalls)
+	assert.Equal(t, time.Unix(1735406731, 0).UTC(), res[0].LastSubmittedAt)
+	assert.Equal(t, time.Unix(1735406931, 0).UTC(), res[2].LastSubmittedAt)
 }
 
 func TestFetchSubmissionsShouldReturnErrorWhenFetchQuestionsFails(t *testing.T) {

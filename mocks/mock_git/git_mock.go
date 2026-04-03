@@ -10,60 +10,74 @@
 package mock_git
 
 import (
-        reflect "reflect"
-        time "time"
+	reflect "reflect"
+	time "time"
 
-        gomock "go.uber.org/mock/gomock"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockGitClient is a mock of GitClient interface.
 type MockGitClient struct {
-        ctrl     *gomock.Controller
-        recorder *MockGitClientMockRecorder
-        isgomock struct{}
+	ctrl     *gomock.Controller
+	recorder *MockGitClientMockRecorder
+	isgomock struct{}
 }
 
 // MockGitClientMockRecorder is the mock recorder for MockGitClient.
 type MockGitClientMockRecorder struct {
-        mock *MockGitClient
+	mock *MockGitClient
 }
 
 // NewMockGitClient creates a new mock instance.
 func NewMockGitClient(ctrl *gomock.Controller) *MockGitClient {
-        mock := &MockGitClient{ctrl: ctrl}
-        mock.recorder = &MockGitClientMockRecorder{mock}
-        return mock
+	mock := &MockGitClient{ctrl: ctrl}
+	mock.recorder = &MockGitClientMockRecorder{mock}
+	return mock
 }
 
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockGitClient) EXPECT() *MockGitClientMockRecorder {
-        return m.recorder
+	return m.recorder
 }
 
-// Commit mocks base method.
-func (m *MockGitClient) Commit(folderName, fileName, code, commitMessage string, timestamp time.Time) error {
-        m.ctrl.T.Helper()
-        ret := m.ctrl.Call(m, "Commit", folderName, fileName, code, commitMessage, timestamp)
-        ret0, _ := ret[0].(error)
-        return ret0
+// WriteFile mocks base method.
+func (m *MockGitClient) WriteFile(path, content string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WriteFile", path, content)
+	ret0, _ := ret[0].(error)
+	return ret0
 }
 
-// Commit indicates an expected call of Commit.
-func (mr *MockGitClientMockRecorder) Commit(folderName, fileName, code, commitMessage, timestamp any) *gomock.Call {
-        mr.mock.ctrl.T.Helper()
-        return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Commit", reflect.TypeOf((*MockGitClient)(nil).Commit), folderName, fileName, code, commitMessage, timestamp)
+// WriteFile indicates an expected call of WriteFile.
+func (mr *MockGitClientMockRecorder) WriteFile(path, content any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WriteFile", reflect.TypeOf((*MockGitClient)(nil).WriteFile), path, content)
+}
+
+// CommitAll mocks base method.
+func (m *MockGitClient) CommitAll(commitMessage string, timestamp time.Time) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CommitAll", commitMessage, timestamp)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CommitAll indicates an expected call of CommitAll.
+func (mr *MockGitClientMockRecorder) CommitAll(commitMessage, timestamp any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CommitAll", reflect.TypeOf((*MockGitClient)(nil).CommitAll), commitMessage, timestamp)
 }
 
 // Push mocks base method.
 func (m *MockGitClient) Push() error {
-        m.ctrl.T.Helper()
-        ret := m.ctrl.Call(m, "Push")
-        ret0, _ := ret[0].(error)
-        return ret0
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Push")
+	ret0, _ := ret[0].(error)
+	return ret0
 }
 
 // Push indicates an expected call of Push.
 func (mr *MockGitClientMockRecorder) Push() *gomock.Call {
-        mr.mock.ctrl.T.Helper()
-        return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Push", reflect.TypeOf((*MockGitClient)(nil).Push))
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Push", reflect.TypeOf((*MockGitClient)(nil).Push))
 }

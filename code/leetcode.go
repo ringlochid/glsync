@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/ahmed-e-abdulaziz/glsync/config"
@@ -23,9 +24,14 @@ var submissionListQuery string
 //go:embed leetcode-graphql/user-progress-question-list-query.json
 var userProgressQuestionListQuery string
 
+//go:embed leetcode-graphql/question-details-query.json
+var questionDetailsQuery string
+
 const (
-	maxRetry    = 25              // LeetCode API can fail A LOT :( It requires a ton of retries when it fails
-	backoffTime = 1 * time.Second // 1 second to avoid keep using LeetCode API when it fails
+	maxRetry                 = 25              // LeetCode API can fail A LOT :( It requires a ton of retries when it fails
+	backoffTime              = 1 * time.Second // 1 second to avoid keep using LeetCode API when it fails
+	acceptedSubmissionStatus = 10
+	submissionListPageSize   = 20
 )
 
 // Implementation of CodeClient for LeetCode
@@ -50,49 +56,76 @@ func (lc leetcode) FetchSubmissions() ([]Submission, error) {
 		return nil, errors.New("failed to fetch questions from LeetCode")
 	}
 
-	log.Printf("User has %v questions accepted on LeetCode, fetching code for each next\n", len(questions))
-	submissions := make([]Submission, 0, len(questions)) // Changed to 0 initial length
+	log.Printf("User has %v solved questions on LeetCode, fetching accepted submissions for each next\n", len(questions))
+	submissions := make([]Submission, 0, len(questions))
 
 	for _, question := range questions {
-		log.Printf("\tFetching latest submission for question: %v %v\n", question.FrontendId, question.Title)
-		submission, err := lc.fetchQuestionSubmission(question)
+		log.Printf("\tFetching accepted submissions for question: %v %v\n", question.FrontendId, question.Title)
+		questionSubmissions, err := lc.fetchQuestionSubmissions(question)
 		if err != nil {
-			log.Printf("Warning: Failed to fetch submission for question %s: %v\n", question.Title, err)
-			continue // Skip this submission but continue with others
+			log.Printf("Warning: Failed to fetch accepted submissions for question %s: %v\n", question.Title, err)
+			continue
 		}
-		submissions = append(submissions, submission)
+		submissions = append(submissions, questionSubmissions...)
 	}
 
 	if len(submissions) == 0 {
 		return nil, errors.New("failed to fetch any submissions successfully")
 	}
 
-	log.Printf("Fetched %d/%d submissions successfully\n==============\n", len(submissions), len(questions))
+	log.Printf("Fetched %d accepted submissions successfully across %d solved questions\n==============\n", len(submissions), len(questions))
 	return submissions, nil
 }
 
-// New helper function to handle single question submission
-func (lc leetcode) fetchQuestionSubmission(question lcQuestion) (Submission, error) {
-	lcSubmission, err := lc.fetchSubmissionOverview(question.TitleSlug)
+func (lc leetcode) fetchQuestionSubmissions(question lcQuestion) ([]Submission, error) {
+	details, err := lc.fetchQuestionDetails(question.TitleSlug)
+	if err != nil {
+		log.Printf("Warning: Failed to fetch metadata for question %s: %v\n", question.Title, err)
+	}
+
+	lcSubmissions, err := lc.fetchSubmissionOverviews(question.TitleSlug)
 	if err != nil {
 		log.Printf("Error fetching question submissions: %v\n", err)
-		return Submission{}, errors.New("submission overview error")
+		return nil, errors.New("submission overview error")
 	}
 
-	code, err := lc.fetchSubmissionCode(lcSubmission.Id, 0)
-	if err != nil {
-		log.Printf("Error fetching submission code: %v\n", err)
-		return Submission{}, errors.New("submission code error")
+	if len(lcSubmissions) == 0 {
+		return nil, nil
 	}
 
-	return Submission{
-		question.FrontendId,
-		question.Title,
-		question.TitleSlug,
-		question.LastSubmittedAt,
-		lcSubmission.Lang,
-		code,
-	}, nil
+	tags := extractTagNames(details.TopicTags)
+	submissions := make([]Submission, 0, len(lcSubmissions))
+	for _, lcSubmission := range lcSubmissions {
+		code, err := lc.fetchSubmissionCode(lcSubmission.Id, 0)
+		if err != nil {
+			log.Printf("Warning: Error fetching submission code for submission %s: %v\n", lcSubmission.Id, err)
+			continue
+		}
+
+		timestamp, err := parseSubmissionTimestamp(lcSubmission.Timestamp)
+		if err != nil {
+			log.Printf("Warning: Error parsing submission timestamp for submission %s: %v\n", lcSubmission.Id, err)
+			continue
+		}
+
+		submissions = append(submissions, Submission{
+			Id:              question.FrontendId,
+			Title:           question.Title,
+			TitleSlug:       question.TitleSlug,
+			SubmissionId:    lcSubmission.Id,
+			LastSubmittedAt: timestamp,
+			Lang:            lcSubmission.Lang,
+			Code:            code,
+			Difficulty:      details.Difficulty,
+			Tags:            tags,
+		})
+	}
+
+	if len(submissions) == 0 {
+		return nil, errors.New("submission code error")
+	}
+
+	return submissions, nil
 }
 
 // Fetches question to extract required info for Submission struct
@@ -112,26 +145,79 @@ func (lc leetcode) fetchQuestions() ([]lcQuestion, error) {
 	return body.Data.QuestionsList.Questions, nil
 }
 
-// Fetches id and language of submission into lcSubmissionOverview struct
-// Uses LC's GraphQl query that's called submissionList
-//
-// titleSlug is a no-whitespace representation of the question title, used to query submissions for a question
-// Returns an error if it encounters one while querying and an nil lcSumbissionOverview
-func (lc leetcode) fetchSubmissionOverview(titleSlug string) (lcSumbissionOverview, error) {
-	bodyBytes, err := lc.queryLeetcode(fmt.Sprintf(submissionListQuery, titleSlug))
+func (lc leetcode) fetchQuestionDetails(titleSlug string) (lcQuestionDetails, error) {
+	bodyBytes, err := lc.queryLeetcode(fmt.Sprintf(questionDetailsQuery, titleSlug))
 	if err != nil {
-		return lcSumbissionOverview{}, fmt.Errorf("error fetching submission overview from leetcode: %w", err)
+		return lcQuestionDetails{}, fmt.Errorf("error fetching question details from leetcode: %w", err)
 	}
-	body := &RequestBody[lcSubmissionListData]{}
-	err = json.Unmarshal(bodyBytes, body)
+
+	body := &RequestBody[lcQuestionDetailsData]{}
+	if err := json.Unmarshal(bodyBytes, body); err != nil {
+		return lcQuestionDetails{}, fmt.Errorf("error parsing question details response from leetcode: %w", err)
+	}
+	return body.Data.Question, nil
+}
+
+// Fetches accepted submission overviews for a question.
+// Uses LC's GraphQl query that's called submissionList.
+func (lc leetcode) fetchSubmissionOverviews(titleSlug string) ([]lcSumbissionOverview, error) {
+	var (
+		allSubmissions []lcSumbissionOverview
+		lastKey        *string
+	)
+
+	for {
+		query := buildSubmissionListQuery(titleSlug, lastKey, submissionListPageSize, acceptedSubmissionStatus)
+		bodyBytes, err := lc.queryLeetcode(query)
+		if err != nil {
+			return nil, fmt.Errorf("error fetching submission overview from leetcode: %w", err)
+		}
+
+		body := &RequestBody[lcSubmissionListData]{}
+		if err := json.Unmarshal(bodyBytes, body); err != nil {
+			log.Println(err)
+			return nil, fmt.Errorf("error parsing submission overview from leetcode: %w", err)
+		}
+
+		allSubmissions = append(allSubmissions, body.Data.LCSubmissionList.LCSubmissions...)
+		if !body.Data.LCSubmissionList.HasNext || body.Data.LCSubmissionList.LastKey == nil {
+			break
+		}
+		lastKey = body.Data.LCSubmissionList.LastKey
+	}
+
+	if len(allSubmissions) == 0 {
+		return nil, fmt.Errorf("no accepted submissions found for question: %s", titleSlug)
+	}
+
+	return allSubmissions, nil
+}
+
+func buildSubmissionListQuery(titleSlug string, lastKey *string, limit int, status int) string {
+	lastKeyJSON := "null"
+	if lastKey != nil {
+		lastKeyJSON = fmt.Sprintf("%q", *lastKey)
+	}
+	return fmt.Sprintf(submissionListQuery, titleSlug, limit, lastKeyJSON, strconv.Itoa(status))
+}
+
+func parseSubmissionTimestamp(timestamp string) (time.Time, error) {
+	unixTimestamp, err := strconv.ParseInt(timestamp, 10, 64)
 	if err != nil {
-		log.Println(err)
-		return lcSumbissionOverview{}, fmt.Errorf("error parsing submission overview from leetcode: %w", err)
+		return time.Time{}, fmt.Errorf("invalid submission timestamp %q: %w", timestamp, err)
 	}
-	if len(body.Data.LCSubmissionList.LCSubmissions) == 0 {
-		return lcSumbissionOverview{}, fmt.Errorf("no submissions found for question: %s", titleSlug)
+	return time.Unix(unixTimestamp, 0).UTC(), nil
+}
+
+func extractTagNames(tags []lcTopicTag) []string {
+	names := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if tag.Name == "" {
+			continue
+		}
+		names = append(names, tag.Name)
 	}
-	return body.Data.LCSubmissionList.LCSubmissions[0], nil // we only need the lastest submission
+	return names
 }
 
 // Fetches submission's code using the leetcode's submission id
@@ -235,17 +321,34 @@ type lcQuestion struct {
 	LastResult      string    `json:"lastResult"`
 }
 
+type lcQuestionDetailsData struct {
+	Question lcQuestionDetails `json:"question"`
+}
+
+type lcQuestionDetails struct {
+	Difficulty string       `json:"difficulty"`
+	TopicTags  []lcTopicTag `json:"topicTags"`
+}
+
+type lcTopicTag struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
 type lcSubmissionListData struct {
 	LCSubmissionList lcSubmissionList `json:"questionSubmissionList"`
 }
 
 type lcSubmissionList struct {
+	LastKey       *string                `json:"lastKey"`
+	HasNext       bool                   `json:"hasNext"`
 	LCSubmissions []lcSumbissionOverview `json:"submissions"`
 }
 
 type lcSumbissionOverview struct {
-	Id   string `json:"id"`
-	Lang string `json:"lang"`
+	Id        string `json:"id"`
+	Lang      string `json:"lang"`
+	Timestamp string `json:"timestamp"`
 }
 
 type lcSubmissionDetailsData struct {

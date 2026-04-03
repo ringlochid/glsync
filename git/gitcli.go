@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,29 +43,38 @@ func NewGitCli(cfg config.Config) gitcli {
 	if err != nil {
 		log.Panicf("Couldn't chdir into repo folder %s. Please check permissions and try again", gh.repoFolderName)
 	}
+	if err := gh.clearWorktree(); err != nil {
+		log.Panicf("Couldn't clear repo folder %s before sync: %v", gh.repoFolderName, err)
+	}
 	log.Printf("Cloned %s successfully\n", gh.repoFolderName)
 	return gh
 }
 
-func (g gitcli) Commit(folderName, fileName, code, commitMessage string, timestamp time.Time) error {
-	err := g.createCodeFolderAndFile(folderName, fileName, code)
-	if err != nil {
-		return fmt.Errorf("encountered the following error while creating the code folder and file:\n%v", err)
+func (g gitcli) WriteFile(path, content string) error {
+	filePath := filepath.Clean(path)
+	if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
+		return err
 	}
-	out, err := exec.Command("git", "add", ".").CombinedOutput()
+	if err := os.WriteFile(filePath, []byte(content), os.ModePerm); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (g gitcli) CommitAll(commitMessage string, timestamp time.Time) error {
+	out, err := exec.Command("git", "add", "-A").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf(`encountered an error while executing the command 'git add .' in folder %s.
+		return fmt.Errorf(`encountered an error while executing the command 'git add -A' in folder %s.
 			The error: %s with command output: %s`, g.repoFolderName, err, string(out))
 	}
 	os.Setenv(commitDateEnvVar, g.toGitDate(timestamp))
 	defer os.Unsetenv(commitDateEnvVar)
-	out, err = exec.Command("git", "commit", fmt.Sprintf("--date='%v'", g.toGitDate(timestamp)), fmt.Sprintf("-m %s", commitMessage)).CombinedOutput()
+	out, err = exec.Command("git", "commit", "--allow-empty", fmt.Sprintf("--date=%v", g.toGitDate(timestamp)), "-m", commitMessage).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf(`encountered an error while executing the command 'git commit %s %s' in folder %s.
+		return fmt.Errorf(`encountered an error while executing the command 'git commit --allow-empty --date=%s -m %s' in folder %s.
 			The error: %s 
 			with command output: %s`,
-			fmt.Sprintf("--date='%v'", g.toGitDate(timestamp)), fmt.Sprintf("-m %s", commitMessage),
-			g.repoFolderName, err, string(out))
+			g.toGitDate(timestamp), commitMessage, g.repoFolderName, err, string(out))
 	}
 	return nil
 }
@@ -86,15 +96,18 @@ func (g gitcli) Push() error {
 	return nil
 }
 
-func (g gitcli) createCodeFolderAndFile(folderName string, fileName string, code string) error {
-	filePath := folderName + "/" + fileName
-	err := os.Mkdir(folderName, os.ModePerm)
-	if err != nil && !os.IsExist(err) { // Ignore if file exists to update the file content
+func (g gitcli) clearWorktree() error {
+	entries, err := os.ReadDir(".")
+	if err != nil {
 		return err
 	}
-	err = os.WriteFile(filePath, []byte(code), os.ModePerm)
-	if err != nil {
-		return errors.New("file exists")
+	for _, entry := range entries {
+		if entry.Name() == ".git" {
+			continue
+		}
+		if err := os.RemoveAll(entry.Name()); err != nil {
+			return err
+		}
 	}
 	return nil
 }

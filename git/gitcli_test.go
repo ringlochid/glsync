@@ -57,76 +57,64 @@ func createTestFolder() string {
 	return testDir
 }
 
-func TestCommit(t *testing.T) {
+func TestWriteFile(t *testing.T) {
 	// Given
-	codeFolderName, fileName, code, commitMessage, timestamp := "new-code-folder", "stub.go", "package main\n", "commit message", time.Now()
-	defer os.RemoveAll("new-code-folder")
+	path, content := "01-two-sum/README.md", "# Two Sum\n"
+	defer os.RemoveAll("01-two-sum")
 
 	// When
-	err := g.Commit(codeFolderName, fileName, code, commitMessage, timestamp)
+	err := g.WriteFile(path, content)
 
 	// Then
-	// Verify that the folder and file of the code exists
 	assert.NoError(t, err)
-	assert.DirExists(t, codeFolderName)
-	filePath := codeFolderName + "/" + fileName
-	assert.FileExists(t, filePath)
-
-	//Veriy the code is correct
-	actualCode, _ := os.ReadFile(filePath)
-	assert.Equal(t, code, string(actualCode))
-
-	// Verify the date of the commit is correct
-	actualTimestamp, actualCommitMessage := getCommitTimeAndMessage(t)
-	assert.Equal(t, commitMessage, actualCommitMessage)
-	assert.Equal(t, timestamp.Round(time.Minute), actualTimestamp.Round(time.Minute)) // Round to avoid partial second errors
+	assert.FileExists(t, path)
+	actual, _ := os.ReadFile(path)
+	assert.Equal(t, content, string(actual))
 }
 
-func TestCommitShouldFailWhenFolderCreationFails(t *testing.T) {
+func TestCommitAll(t *testing.T) {
 	// Given
-	if err := os.Mkdir("alreadyexists", os.ModeDir); err != nil {
-		t.Error(err)
-	}
-	defer os.Remove("alreadyexists")
-	invalidFolderName, fileName, code, commitMessage, timestamp := "alreadyexists", "stub.go", "package main\n", "commit message", time.Now()
+	timestamp := time.Now().UTC()
+	require.NoError(t, g.WriteFile("01-two-sum/README.md", "# Two Sum\n"))
+	defer os.RemoveAll("01-two-sum")
 
 	// When
-	err := g.Commit(invalidFolderName, fileName, code, commitMessage, timestamp)
+	err := g.CommitAll("sync commit", timestamp)
 
 	// Then
-	require.Error(t, err)
+	assert.NoError(t, err)
+	actualTimestamp, actualCommitMessage := getCommitTimeAndMessage(t)
+	assert.Equal(t, "sync commit", actualCommitMessage)
+	assert.Equal(t, timestamp.UTC().Round(time.Minute).Unix(), actualTimestamp.UTC().Round(time.Minute).Unix())
 }
 
-// This test will fail if you for some reason keep track of your temp folder using git
-// and in that case please tell me why you did that
-// I would genuinely love to know who does something like this
-func TestCommitShouldFailWhenGitAddFails(t *testing.T) {
+func TestCommitAllShouldFailWhenGitAddFails(t *testing.T) {
 	// Given
 	originalDir, _ := os.Getwd()
-	// Not a git repo, so git add should fail
 	if err := os.Chdir(os.TempDir()); err != nil {
 		t.Error(err)
 	}
-	folderName, fileName, code, commitMessage, timestamp := "new-code-folder", "stub.go", "package main\n", "commit message", time.Now()
+	require.NoError(t, os.MkdirAll("01-two-sum", os.ModePerm))
+	defer os.RemoveAll("01-two-sum")
+	require.NoError(t, os.WriteFile("01-two-sum/README.md", []byte("# Two Sum\n"), os.ModePerm))
 
 	// When
-	err := g.Commit(folderName, fileName, code, commitMessage, timestamp)
+	err := g.CommitAll("sync commit", time.Now().UTC())
 
 	// Then
 	require.Error(t, err)
-	os.RemoveAll("new-code-folder")
 	if err = os.Chdir(originalDir); err != nil {
 		t.Error(err)
 	}
 }
 
-func TestCommitShouldFailWhenGitCommitFails(t *testing.T) {
+func TestCommitAllShouldFailWhenGitCommitFails(t *testing.T) {
 	// Given
-	codeFolderName, fileName, code, emptyCommitMessage, timestamp := "new-code-folder", "stub.go", "package main\n", "", time.Now()
-	defer os.RemoveAll("new-code-folder")
+	require.NoError(t, g.WriteFile("01-two-sum/README.md", "# Two Sum\n"))
+	defer os.RemoveAll("01-two-sum")
 
 	// When
-	err := g.Commit(codeFolderName, fileName, code, emptyCommitMessage, timestamp)
+	err := g.CommitAll("", time.Now().UTC())
 
 	// Then
 	assert.Error(t, err)

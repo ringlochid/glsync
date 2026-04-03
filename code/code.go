@@ -22,7 +22,10 @@ type Submission struct {
 	Id              string
 	Title           string
 	TitleSlug       string
+	SubmissionId    string
 	LastSubmittedAt time.Time
 	Lang            string
 	Code            string
+	Difficulty      string
+	Tags            []string
 }

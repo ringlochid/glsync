@@ -5,6 +5,7 @@ package git
 import "time"
 
 type GitClient interface {
-	Commit(folderName, fileName, code, commitMessage string, timestamp time.Time) error
+	WriteFile(path, content string) error
+	CommitAll(commitMessage string, timestamp time.Time) error
 	Push() error
 }

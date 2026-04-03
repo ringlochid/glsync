@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,8 @@ var questionSubmissionListResponse, _ = os.ReadFile("../code/leetcode-testdata/l
 var submissionDetailsResponse, _ = os.ReadFile("../code/leetcode-testdata/leetcode-responses/submission-details-response.json")
 
 var userProgressQuestionListResponse, _ = os.ReadFile("../code/leetcode-testdata/leetcode-responses/user-progress-question-list-response.json")
+
+var questionDetailsResponse, _ = os.ReadFile("../code/leetcode-testdata/leetcode-responses/question-details-response.json")
 
 var userProgressQuestionListCalled, submissionListCalled, submissionDetailsCalled bool
 
@@ -41,11 +44,14 @@ func TestLeetCodeGitIntegration(t *testing.T) {
 	assert.True(t, submissionListCalled)
 	assert.True(t, submissionDetailsCalled)
 
-	// Assert the Git push worked successfully
-	expectedTimestamp, _ := time.Parse("2006-01-02 15:04:05 -0700", "2024-12-28 17:25:31 +0000")
-	actualTimestamp, message := getCommitTimeAndMessage(t, mockGitRepoUrl)
-	assert.Equal(t, expectedTimestamp, actualTimestamp)
-	assert.Equal(t, "Code challenge submission for question: 128 Longest Consecutive Sequence", message)
+	// Assert the Git push worked successfully with one sync commit
+	_, message := getCommitTimeAndMessage(t, mockGitRepoUrl)
+	assert.Equal(t, "Sync accepted LeetCode submissions (1 problems, 1 submissions)", message)
+	assertRemoteFileExists(t, mockGitRepoUrl, "README.md")
+	assertRemoteFileExists(t, mockGitRepoUrl, "data/.gitkeep")
+	assertRemoteFileExists(t, mockGitRepoUrl, "page/.gitkeep")
+	assertRemoteFileExists(t, mockGitRepoUrl, "scripts/.gitkeep")
+	assertRemoteFileExists(t, mockGitRepoUrl, "problems/128-longest-consecutive-sequence/README.md")
 }
 
 func initMockLeetCode(t *testing.T) string {
@@ -56,6 +62,12 @@ func initMockLeetCode(t *testing.T) string {
 			_, err := w.Write(userProgressQuestionListResponse)
 			if err != nil {
 				t.Fatal("Couldn't write userProgressQuestionListResponse to response correctly")
+			}
+		}
+		if strings.Contains(string(reqBody), "questionData") {
+			_, err := w.Write(questionDetailsResponse)
+			if err != nil {
+				t.Fatal("Couldn't write questionDetailsResponse to response correctly")
 			}
 		}
 		if strings.Contains(string(reqBody), "submissionList") {
@@ -99,4 +111,12 @@ func getCommitTimeAndMessage(t *testing.T, repoPath string) (time.Time, string) 
 	actualTimestamp, _ := time.Parse("2006-01-02 15:04:05 -0700", strings.TrimSpace(commitMessageAndDate[0]))
 	actualCommitMessage := strings.TrimSpace(commitMessageAndDate[1])
 	return actualTimestamp, actualCommitMessage
+}
+
+func assertRemoteFileExists(t *testing.T, repoPath, targetPath string) {
+	t.Helper()
+	showOutput, err := exec.Command("git", "-C", repoPath, "show", "HEAD:"+filepath.ToSlash(targetPath)).CombinedOutput()
+	if err != nil {
+		t.Fatalf("expected %s in remote repo, git show failed: %s %v", targetPath, string(showOutput), err)
+	}
 }
